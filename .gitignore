@@ -1,0 +1,29 @@
+# Dependencias PHP
+/vendor/
+
+# Entornos / secretos
+.env
+.env.local
+*.env
+
+# Composer
+composer.lock
+
+# Docker artefactos
+/.docker
+docker-compose.override.yml
+
+# Logs / cache
+*.log
+storage/
+cache/
+
+# IDE / SO
+/.idea/
+/.vscode/
+/*.code-workspace
+.DS_Store
+Thumbs.db
+
+# Swagger build si generas archivos estáticos (no lo hacemos, pero por si las dudas)
+public/openapi.json

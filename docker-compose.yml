@@ -1,0 +1,16 @@
+services:
+  oncoapp-api:
+    build: .
+    container_name: oncoapp-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - .:/var/www/html
+    command: >
+      sh -c "
+        composer install --no-interaction --prefer-dist &&
+        php -S 0.0.0.0:8000 -t public
+      "
+    restart: unless-stopped
