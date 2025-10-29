@@ -35,27 +35,31 @@ class ReporteController
         $db = Database::getConnection();
 
         $sql = "
-            SELECT
-              (SELECT COUNT(DISTINCT t.id_paciente)
-                 FROM tratamiento t
-                 WHERE t.fecha_inicio <= CURRENT_DATE
-                   AND (t.fecha_fin IS NULL OR t.fecha_fin >= CURRENT_DATE)
-              ) AS pacientes_activos,
-              (SELECT COUNT(*)
-                 FROM diagnostico d
-                 WHERE date_trunc('month', d.fecha_diagnostico) = date_trunc('month', CURRENT_DATE)
-              ) AS nuevos_mes,
-              (SELECT COUNT(*)
-                 FROM tratamiento t
-                 WHERE t.fecha_inicio <= CURRENT_DATE
-                   AND (t.fecha_fin IS NULL OR t.fecha_fin >= CURRENT_DATE)
-              ) AS tratamientos_en_curso,
-              (SELECT COUNT(*)
-                 FROM tratamiento t
-                 WHERE t.fecha_fin IS NOT NULL
-                   AND date_trunc('month', t.fecha_fin) = date_trunc('month', CURRENT_DATE)
-              ) AS altas_mes
-        ";
+        SELECT
+            -- Pacientes activos según flag de la tabla paciente
+            (SELECT COUNT(*) FROM paciente p WHERE p.activo = true) AS pacientes_activos,
+
+            -- Diagnósticos nuevos en el mes actual
+            (SELECT COUNT(*) 
+             FROM diagnostico d
+             WHERE date_trunc('month', d.fecha_diagnostico) = date_trunc('month', CURRENT_DATE)
+            ) AS nuevos_mes,
+
+            -- Tratamientos en curso (vigentes por fechas)
+            (SELECT COUNT(*) 
+             FROM tratamiento t
+             WHERE t.fecha_inicio <= CURRENT_DATE
+               AND (t.fecha_fin IS NULL OR t.fecha_fin >= CURRENT_DATE)
+            ) AS tratamientos_en_curso,
+
+            -- Altas del mes (tratamientos cerrados este mes)
+            (SELECT COUNT(*) 
+             FROM tratamiento t
+             WHERE t.fecha_fin IS NOT NULL
+               AND date_trunc('month', t.fecha_fin) = date_trunc('month', CURRENT_DATE)
+            ) AS altas_mes
+    ";
+
         $res = $db->query($sql)->fetch();
 
         return ResponseHelper::json($response, [
@@ -65,6 +69,7 @@ class ReporteController
             'altas_mes'               => (int)($res['altas_mes'] ?? 0),
         ]);
     }
+
 
     #[OA\Get(
         path: "/api/v1/reportes/cancer-tipos",
