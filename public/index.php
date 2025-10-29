@@ -4,6 +4,7 @@ require __DIR__ . '/../vendor/autoload.php';
 use DI\ContainerBuilder;
 use Slim\Factory\AppFactory;
 use Dotenv\Dotenv;
+use App\Middleware\CorsMiddleware;
 
 // Cargar variables de entorno
 $dotenv = Dotenv::createImmutable(dirname(__DIR__));
@@ -20,6 +21,11 @@ $app = AppFactory::create();
 // Middlewares
 $app->addBodyParsingMiddleware();
 $app->addRoutingMiddleware();
+
+$app->add(new CorsMiddleware());
+$app->options('/{routes:.+}', function ($request, $response) {
+    return $response;
+});
 
 // Registrar rutas
 (require __DIR__ . '/../src/routes.php')($app);
