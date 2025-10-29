@@ -168,6 +168,7 @@ class CatalogoController
                         properties: [
                             new OA\Property(property: "id_institucion", type: "integer"),
                             new OA\Property(property: "nombre_institucion", type: "string"),
+                            new OA\Property(property: "nivel_complejidad", type: "string", nullable: true),
                             new OA\Property(property: "ciudad", type: "string", nullable: true)
                         ]
                     )
@@ -178,7 +179,26 @@ class CatalogoController
     public function getInstituciones(Request $request, Response $response): Response
     {
         $db = Database::getConnection();
-        $sql = "SELECT id_institucion, nombre_institucion, ciudad FROM institucion ORDER BY nombre_institucion";
-        return ResponseHelper::json($response, $db->query($sql)->fetchAll());
+        $sql = "
+        SELECT
+            id_institucion,
+            nombre_institucion,
+            nivel_complejidad,
+            ciudad
+        FROM institucion
+        ORDER BY nombre_institucion
+    ";
+        $rows = $db->query($sql)->fetchAll();
+
+        // (opcional) normaliza nulls explícitamente si quieres:
+        $out = array_map(fn($r) => [
+            'id_institucion'     => (int)$r['id_institucion'],
+            'nombre_institucion' => $r['nombre_institucion'],
+            'nivel_complejidad'  => $r['nivel_complejidad'] ?? null,
+            'ciudad'             => $r['ciudad'] ?? null,
+        ], $rows);
+
+        return ResponseHelper::json($response, $out);
     }
+
 }
