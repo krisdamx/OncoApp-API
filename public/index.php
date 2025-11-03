@@ -27,6 +27,11 @@ $app->options('/{routes:.+}', function ($request, $response) {
     return $response;
 });
 
+$errorMiddleware = $app->addErrorMiddleware(true, false, false);
+// (displayErrorDetails, logErrors, logErrorDetails)
+// pon true solo en desarrollo si de verdad quieres stacktraces en pantalla
+
+
 // Registrar rutas
 (require __DIR__ . '/../src/routes.php')($app);
 
