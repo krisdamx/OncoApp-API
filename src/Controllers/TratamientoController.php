@@ -109,48 +109,43 @@ class TratamientoController
     )]
     public function getActividades(Request $request, Response $response, array $args): Response
     {
-        $idTratamiento = (int)$args['id'];
+        $id = (int)($args['id'] ?? 0);
+        if ($id <= 0) {
+            return ResponseHelper::json($response, ['error' => 'tratamientoId inválido'], 400);
+        }
+
         $db = Database::getConnection();
-
-        // Nota:
-        // - La tabla es actividad_tratamiento.
-        // - archivo_resultado es BYTEA y enlace_archivo es texto; el contrato pide "archivo" vacío o null.
-        //   Para la demo devolvemos siempre NULL y mantenemos el campo por contrato.
         $sql = "
-        SELECT
-            a.id_actividad,
-            a.tipo_actividad,
-            a.fecha_actividad,
-            a.nombre_procedimiento,
-            a.id_unidad,
-            a.medico_responsable,
-            a.observaciones,
-            a.resultado_clinico,
-            NULL::text AS archivo
-        FROM actividad_tratamiento a
-        WHERE a.id_tratamiento = :id_tratamiento
-        ORDER BY a.fecha_actividad DESC NULLS LAST, a.id_actividad
-    ";
-
+            SELECT
+                a.id_actividad,
+                a.tipo_actividad,
+                a.fecha_actividad,
+                a.nombre_procedimiento,
+                a.id_unidad,
+                a.medico_responsable,
+                a.observaciones,
+                a.resultado_clinico,
+                COALESCE(a.enlace_archivo, NULL) AS archivo
+            FROM public.actividad_tratamiento a
+            WHERE a.id_tratamiento = :id
+            ORDER BY a.fecha_actividad DESC, a.id_actividad DESC
+        ";
         $stmt = $db->prepare($sql);
-        $stmt->execute(['id_tratamiento' => $idTratamiento]);
-        $rows = $stmt->fetchAll();
+        $stmt->execute([':id' => $id]);
+        $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
 
-        $out = array_map(function ($r) {
-            return [
-                'id_actividad'        => (int)$r['id_actividad'],
-                'tipo_actividad'      => $r['tipo_actividad'] ?? null,
-                'fecha_actividad'     => $r['fecha_actividad'] ?? null,
-                'nombre_procedimiento'=> $r['nombre_procedimiento'] ?? null,
-                'id_unidad'           => isset($r['id_unidad']) ? (int)$r['id_unidad'] : null,
-                'medico_responsable'  => $r['medico_responsable'] ?? null,
-                'observaciones'       => $r['observaciones'] ?? null,
-                'resultado_clinico'   => $r['resultado_clinico'] ?? null,
-                'archivo'             => null, // contrato: vacío o null
-            ];
+        // Normaliza fechas a ISO 8601 (si el front manda date-time)
+        $items = array_map(function ($r) {
+            if (!empty($r['fecha_actividad'])) {
+                // Devuelve YYYY-MM-DD (si prefieres date-time, añade 'T00:00:00Z')
+                $r['fecha_actividad'] = (new \DateTime($r['fecha_actividad']))->format('Y-m-d');
+            }
+            // archivo ya puede ser NULL o URL
+            return $r;
         }, $rows);
 
-        return ResponseHelper::json($response, $out);
+        return ResponseHelper::json($response, $items);
     }
+
 
 }

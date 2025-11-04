@@ -34,40 +34,38 @@ class ReporteController
     {
         $db = Database::getConnection();
 
+        // Cálculo directo SIN vista (evita SQLSTATE[42P01])
         $sql = "
         SELECT
-            -- Pacientes activos según flag de la tabla paciente
-            (SELECT COUNT(*) FROM paciente p WHERE p.activo = true) AS pacientes_activos,
-
-            -- Diagnósticos nuevos en el mes actual
-            (SELECT COUNT(*) 
-             FROM diagnostico d
-             WHERE date_trunc('month', d.fecha_diagnostico) = date_trunc('month', CURRENT_DATE)
-            ) AS nuevos_mes,
-
-            -- Tratamientos en curso (vigentes por fechas)
-            (SELECT COUNT(*) 
-             FROM tratamiento t
-             WHERE t.fecha_inicio <= CURRENT_DATE
-               AND (t.fecha_fin IS NULL OR t.fecha_fin >= CURRENT_DATE)
-            ) AS tratamientos_en_curso,
-
-            -- Altas del mes (tratamientos cerrados este mes)
-            (SELECT COUNT(*) 
-             FROM tratamiento t
-             WHERE t.fecha_fin IS NOT NULL
-               AND date_trunc('month', t.fecha_fin) = date_trunc('month', CURRENT_DATE)
-            ) AS altas_mes
+          (SELECT COUNT(*) FROM public.paciente WHERE activo = true) AS pacientes_activos,
+          (SELECT COUNT(*)
+             FROM public.diagnostico
+             WHERE date_part('month', fecha_diagnostico) = date_part('month', CURRENT_DATE)
+               AND date_part('year',  fecha_diagnostico) = date_part('year',  CURRENT_DATE)
+          ) AS nuevos_mes,
+          (SELECT COUNT(*)
+             FROM public.tratamiento
+             WHERE (fecha_fin IS NULL OR fecha_fin >= CURRENT_DATE)
+          ) AS tratamientos_en_curso,
+          (SELECT COUNT(*)
+             FROM public.tratamiento
+             WHERE fecha_fin IS NOT NULL
+               AND date_part('month', fecha_fin) = date_part('month', CURRENT_DATE)
+               AND date_part('year',  fecha_fin) = date_part('year',  CURRENT_DATE)
+          ) AS altas_mes
     ";
 
-        $res = $db->query($sql)->fetch();
-
-        return ResponseHelper::json($response, [
-            'pacientes_activos'       => (int)($res['pacientes_activos'] ?? 0),
-            'nuevos_mes'              => (int)($res['nuevos_mes'] ?? 0),
-            'tratamientos_en_curso'   => (int)($res['tratamientos_en_curso'] ?? 0),
-            'altas_mes'               => (int)($res['altas_mes'] ?? 0),
-        ]);
+        try {
+            $res = $db->query($sql)->fetch(\PDO::FETCH_ASSOC) ?: [];
+            return ResponseHelper::json($response, [
+                'pacientes_activos'       => (int)($res['pacientes_activos'] ?? 0),
+                'nuevos_mes'              => (int)($res['nuevos_mes'] ?? 0),
+                'tratamientos_en_curso'   => (int)($res['tratamientos_en_curso'] ?? 0),
+                'altas_mes'               => (int)($res['altas_mes'] ?? 0),
+            ]);
+        } catch (\Throwable $e) {
+            return ResponseHelper::error($response, 500, 'Internal Server Error', $e->getMessage(), $request->getUri()->getPath());
+        }
     }
 
 
@@ -92,23 +90,31 @@ class ReporteController
             )
         ]
     )]
-    public function getCancerTipos(Request $request, Response $response): Response
+    public function getCancerTipos(Request $request, Response $response, array $args): Response
     {
         $db = Database::getConnection();
-
-        // En este esquema, el tipo de cáncer está como texto en diagnostico.tipo_cancer
-        $sql = "
-        SELECT
-          COALESCE(d.tipo_cancer, 'Desconocido') AS name,
-          COUNT(*)::int AS value
-        FROM diagnostico d
-        GROUP BY COALESCE(d.tipo_cancer, 'Desconocido')
-        ORDER BY value DESC
-    ";
-        $rows = $db->query($sql)->fetchAll();
-
-        return ResponseHelper::json($response, $rows);
+        try {
+            $sql = "
+            SELECT
+              COALESCE(d.tipo_cancer, 'Sin especificar') AS name,
+              COUNT(*)::int AS value
+            FROM public.diagnostico d
+            GROUP BY d.tipo_cancer
+            ORDER BY value DESC
+        ";
+            $rows = $db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+            return ResponseHelper::json($response, $rows);
+        } catch (\Throwable $e) {
+            return ResponseHelper::error(
+                $response,
+                500,
+                'Internal Server Error',
+                $e->getMessage(),
+                $request->getUri()->getPath()
+            );
+        }
     }
+
 
 
     #[OA\Get(
@@ -132,24 +138,35 @@ class ReporteController
             )
         ]
     )]
-    public function getCostosTratamiento(Request $request, Response $response): Response
+    public function getCostosTratamiento(Request $request, Response $response, array $args): Response
     {
         $db = Database::getConnection();
 
-        // DEMO estable: sin columnas de costo reales. Usamos el conteo por tipo como "cost".
-        $sql = "
-        SELECT
-            t.tipo_tratamiento AS name,
-            COUNT(*)::numeric    AS cost
-        FROM tratamiento t
-        WHERE t.tipo_tratamiento IS NOT NULL
-        GROUP BY t.tipo_tratamiento
-        ORDER BY cost DESC, name
-    ";
-        $rows = $db->query($sql)->fetchAll();
-
-        return ResponseHelper::json($response, $rows);
+        try {
+            // Agregación directa sin depender de la vista
+            $sql = "
+            SELECT
+              t.tipo_tratamiento AS name,
+              ROUND(AVG(COALESCE(m.costo_unitario,0) * COALESCE(cm.cantidad,0)), 2)::numeric AS cost
+            FROM public.costo_medicamento cm
+            JOIN public.medicamento m  ON m.id_medicamento = cm.id_medicamento
+            JOIN public.tratamiento t  ON t.id_tratamiento = cm.id_tratamiento
+            GROUP BY t.tipo_tratamiento
+            ORDER BY cost DESC
+        ";
+            $rows = $db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+            return ResponseHelper::json($response, $rows);
+        } catch (\Throwable $e) {
+            return ResponseHelper::error(
+                $response,
+                500,
+                'Internal Server Error',
+                $e->getMessage(),
+                $request->getUri()->getPath()
+            );
+        }
     }
+
 
 
     #[OA\Get(
@@ -177,18 +194,18 @@ class ReporteController
     {
         $db = Database::getConnection();
 
-        // DEMO estable: si no hay columna de inventario real, usamos el número de prescripciones por medicamento.
         $sql = "
-        SELECT
-          m.nombre_medicamento AS name,
-          COUNT(p.id_prescripcion)::int AS stock
-        FROM medicamento m
-        LEFT JOIN prescripcion p ON p.id_medicamento = m.id_medicamento
-        GROUP BY m.nombre_medicamento
-        ORDER BY stock DESC, name
-    ";
-        $rows = $db->query($sql)->fetchAll();
-
+            SELECT
+                m.nombre_medicamento AS name,
+                COALESCE(SUM(i.stock), 0)::int AS stock
+            FROM public.medicamento m
+            LEFT JOIN public.inventario_medicamento i
+              ON i.id_medicamento = m.id_medicamento
+            GROUP BY m.id_medicamento, m.nombre_medicamento
+            HAVING COALESCE(SUM(i.stock), 0) >= 0
+            ORDER BY stock DESC, name ASC
+        ";
+        $rows = $db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
         return ResponseHelper::json($response, $rows);
     }
 
@@ -222,43 +239,56 @@ class ReporteController
     {
         $db = Database::getConnection();
 
+        // Buckets por edad (ajusta si necesitas otros)
         $sql = "
-        WITH base AS (
-          SELECT
-            CASE
-              WHEN EXTRACT(YEAR FROM age(CURRENT_DATE, p.fecha_nacimiento)) BETWEEN 18 AND 39 THEN '18-39'
-              WHEN EXTRACT(YEAR FROM age(CURRENT_DATE, p.fecha_nacimiento)) BETWEEN 40 AND 59 THEN '40-59'
-              WHEN EXTRACT(YEAR FROM age(CURRENT_DATE, p.fecha_nacimiento)) BETWEEN 60 AND 79 THEN '60-79'
-              ELSE '80+'
-            END AS grupo,
-            COALESCE(d.tipo_cancer, 'Otro') AS cancer
-          FROM diagnostico d
-          JOIN paciente p ON p.id_paciente = d.id_paciente
-        ),
-        agg AS (
-          SELECT grupo, cancer, COUNT(*)::int AS cnt
-          FROM base
-          GROUP BY grupo, cancer
-        ),
-        total_grp AS (
-          SELECT grupo, SUM(cnt) AS total
-          FROM agg
-          GROUP BY grupo
-        )
-        SELECT
-          a.grupo,
-          ROUND(100.0 * SUM(CASE WHEN a.cancer ILIKE 'Mama' THEN a.cnt ELSE 0 END) / NULLIF(t.total,0), 2) AS \"Mama\",
-          ROUND(100.0 * SUM(CASE WHEN a.cancer ILIKE 'Pr%stata' THEN a.cnt ELSE 0 END) / NULLIF(t.total,0), 2) AS \"Prostata\",
-          ROUND(100.0 * SUM(CASE WHEN a.cancer ILIKE 'Pulm%' THEN a.cnt ELSE 0 END) / NULLIF(t.total,0), 2) AS \"Pulmon\",
-          ROUND(100.0 * SUM(CASE WHEN a.cancer ILIKE 'Colon' THEN a.cnt ELSE 0 END) / NULLIF(t.total,0), 2) AS \"Colon\",
-          100.0::numeric AS total
-        FROM agg a
-        JOIN total_grp t ON t.grupo = a.grupo
-        GROUP BY a.grupo, t.total
-        ORDER BY a.grupo
-    ";
-        $rows = $db->query($sql)->fetchAll();
+            WITH base AS (
+              SELECT
+                p.id_paciente,
+                COALESCE(d.tipo_cancer, 'Otros') AS tipo_cancer,
+                COALESCE(p.edad, DATE_PART('year', AGE(CURRENT_DATE, p.fecha_nacimiento)))::int AS edad
+              FROM public.paciente p
+              LEFT JOIN public.diagnostico d ON d.id_paciente = p.id_paciente
+            ),
+            bucket AS (
+              SELECT
+                CASE
+                  WHEN edad < 18 THEN '0-17'
+                  WHEN edad BETWEEN 18 AND 35 THEN '18-35'
+                  WHEN edad BETWEEN 36 AND 55 THEN '36-55'
+                  WHEN edad BETWEEN 56 AND 75 THEN '56-75'
+                  ELSE '76+'
+                END AS grupo,
+                tipo_cancer
+              FROM base
+              WHERE edad IS NOT NULL
+            ),
+            piv AS (
+              SELECT
+                grupo,
+                SUM(CASE WHEN tipo_cancer ILIKE 'Mama%'     THEN 1 ELSE 0 END) AS Mama,
+                SUM(CASE WHEN tipo_cancer ILIKE 'Pr%stata%' THEN 1 ELSE 0 END) AS Prostata,
+                SUM(CASE WHEN tipo_cancer ILIKE 'Pulm%'     THEN 1 ELSE 0 END) AS Pulmon,
+                SUM(CASE WHEN tipo_cancer ILIKE 'Colon%'    THEN 1 ELSE 0 END) AS Colon,
+                SUM(CASE WHEN tipo_cancer NOT ILIKE 'Mama%'
+                       AND tipo_cancer NOT ILIKE 'Pr%stata%'
+                       AND tipo_cancer NOT ILIKE 'Pulm%'
+                       AND tipo_cancer NOT ILIKE 'Colon%' THEN 1 ELSE 0 END) AS Otros
+              FROM bucket
+              GROUP BY grupo
+            )
+            SELECT grupo, Mama, Prostata, Pulmon, Colon, (Mama+Prostata+Pulmon+Colon+Otros) AS total
+            FROM piv
+            ORDER BY CASE grupo
+                      WHEN '0-17' THEN 1
+                      WHEN '18-35' THEN 2
+                      WHEN '36-55' THEN 3
+                      WHEN '56-75' THEN 4
+                      ELSE 5
+                    END
+        ";
+        $rows = $db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
 
+        // Opcional: transformar a porcentajes si luego activas unit=percent
         return ResponseHelper::json($response, $rows);
     }
 

@@ -33,13 +33,14 @@ class CatalogoController
     public function getTiposCancer(Request $request, Response $response): Response
     {
         $db = Database::getConnection();
-        // En esta BD, el tipo viene como texto en diagnostico.tipo_cancer
-        $sql = "SELECT DISTINCT tipo_cancer FROM diagnostico WHERE tipo_cancer IS NOT NULL AND tipo_cancer <> '' ORDER BY 1";
-        $rows = $db->query($sql)->fetchAll();
-
-        // normalizamos a [{ tipo_cancer: '...' }, ...]
-        $out = array_map(fn($r) => ['tipo_cancer' => $r['tipo_cancer']], $rows);
-        return ResponseHelper::json($response, $out);
+        $sql = "
+            SELECT DISTINCT TRIM(tipo) AS tipo_cancer
+            FROM public.tipo_cancer_cat
+            WHERE tipo IS NOT NULL AND TRIM(tipo) <> ''
+            ORDER BY 1 ASC
+        ";
+        $rows = $db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+        return ResponseHelper::json($response, $rows);
     }
 
     #[OA\Get(
@@ -65,8 +66,14 @@ class CatalogoController
     public function getEstados(Request $request, Response $response): Response
     {
         $db = Database::getConnection();
-        $sql = "SELECT DISTINCT estadio_enfermedad AS estado FROM diagnostico WHERE estadio_enfermedad IS NOT NULL ORDER BY estado";
-        return ResponseHelper::json($response, $db->query($sql)->fetchAll());
+        $sql = "
+            SELECT DISTINCT TRIM(estadio_enfermedad) AS estado
+            FROM public.diagnostico
+            WHERE estadio_enfermedad IS NOT NULL AND TRIM(estadio_enfermedad) <> ''
+            ORDER BY 1 ASC
+        ";
+        $rows = $db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+        return ResponseHelper::json($response, $rows);
     }
 
     #[OA\Get(
@@ -92,8 +99,13 @@ class CatalogoController
     public function getTiposTratamiento(Request $request, Response $response): Response
     {
         $db = Database::getConnection();
-        $sql = "SELECT DISTINCT tipo_tratamiento FROM tratamiento WHERE tipo_tratamiento IS NOT NULL ORDER BY 1";
-        $rows = array_map(fn($r) => ['tipo_tratamiento' => $r['tipo_tratamiento']], $db->query($sql)->fetchAll());
+        $sql = "
+            SELECT DISTINCT TRIM(tipo_tratamiento) AS tipo_tratamiento
+            FROM public.tratamiento
+            WHERE tipo_tratamiento IS NOT NULL AND TRIM(tipo_tratamiento) <> ''
+            ORDER BY 1 ASC
+        ";
+        $rows = $db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
         return ResponseHelper::json($response, $rows);
     }
 
@@ -146,12 +158,30 @@ class CatalogoController
             )
         ]
     )]
-    public function getUnidades(Request $request, Response $response): Response
+    public function getUnidades(Request $request, Response $response, array $args): Response
     {
         $db = Database::getConnection();
-        $sql = "SELECT id_unidad, nombre_unidad FROM unidad_atencion ORDER BY nombre_unidad";
-        return ResponseHelper::json($response, $db->query($sql)->fetchAll());
+
+        // No dependemos de la vista; hacemos el JOIN directo.
+        $sql = "
+        SELECT
+          u.id_unidad,
+          u.nombre_unidad,
+          COALESCE(i.ciudad, '')            AS ciudad,
+          COALESCE(i.nivel_complejidad, '') AS nivel_complejidad
+        FROM public.unidad_atencion u
+        LEFT JOIN public.institucion i ON i.id_institucion = u.id_institucion
+        ORDER BY u.nombre_unidad
+    ";
+
+        try {
+            $rows = $db->query($sql)->fetchAll(\PDO::FETCH_ASSOC);
+            return ResponseHelper::json($response, $rows);
+        } catch (\Throwable $e) {
+            return ResponseHelper::error($response, 500, 'Internal Server Error', $e->getMessage(), $request->getUri()->getPath());
+        }
     }
+
 
     #[OA\Get(
         path: "/api/v1/instituciones",
@@ -179,26 +209,17 @@ class CatalogoController
     public function getInstituciones(Request $request, Response $response): Response
     {
         $db = Database::getConnection();
-        $sql = "
-        SELECT
-            id_institucion,
-            nombre_institucion,
-            nivel_complejidad,
-            ciudad
-        FROM institucion
-        ORDER BY nombre_institucion
-    ";
-        $rows = $db->query($sql)->fetchAll();
+        $rows = $db->query("
+            SELECT
+                id_institucion,
+                nombre_institucion,
+                COALESCE(nivel_complejidad, '') AS nivel_complejidad,
+                COALESCE(ciudad, '')            AS ciudad
+            FROM public.institucion
+            ORDER BY nombre_institucion ASC
+        ")->fetchAll(\PDO::FETCH_ASSOC);
 
-        // (opcional) normaliza nulls explícitamente si quieres:
-        $out = array_map(fn($r) => [
-            'id_institucion'     => (int)$r['id_institucion'],
-            'nombre_institucion' => $r['nombre_institucion'],
-            'nivel_complejidad'  => $r['nivel_complejidad'] ?? null,
-            'ciudad'             => $r['ciudad'] ?? null,
-        ], $rows);
-
-        return ResponseHelper::json($response, $out);
+        return ResponseHelper::json($response, $rows);
     }
 
 }

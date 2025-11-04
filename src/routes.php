@@ -6,7 +6,7 @@ use App\Controllers\{
     DiagnosticoController,
     TratamientoController,
     ReporteController,
-    CatalogoController
+    CatalogoController,
 };
 
 return function (App $app) {
@@ -20,7 +20,7 @@ return function (App $app) {
     // Diagnósticos / Tratamientos
     $app->get('/api/v1/diagnosticos/{id}/tratamientos', [DiagnosticoController::class, 'getTratamientos']);
     $app->get('/api/v1/tratamientos/{id}/prescripciones', [TratamientoController::class, 'getPrescripciones']);
-    $app->get('/api/v1/tratamientos/{id}/actividades', [\App\Controllers\TratamientoController::class, 'getActividades']);
+    $app->get('/api/v1/tratamientos/{id}/actividades', [TratamientoController::class, 'getActividades']);
 
 
     // Reportes
